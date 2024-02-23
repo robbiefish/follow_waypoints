@@ -185,10 +185,7 @@ class GetPath(State):
             try:
                 pose = rospy.wait_for_message(topic, PoseWithCovarianceStamped, timeout=1)
             except rospy.ROSException as e:
-                if 'timeout exceeded' in e.message:
-                    continue  # no new waypoint within timeout, looping...
-                else:
-                    raise e
+                continue  # no new waypoint within timeout, looping...
             rospy.loginfo("Recieved new waypoint")
             waypoints.append(changePose(pose, "map"))
             # publish waypoint queue as pose array so that you can see them in rviz, etc.

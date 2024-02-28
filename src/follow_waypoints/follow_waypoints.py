@@ -7,6 +7,7 @@ from smach import State,StateMachine
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray ,PointStamped, QuaternionStamped
 from std_msgs.msg import Empty
+from nav_msgs.msg import Path
 from tf import TransformListener
 import tf
 import tf.transformations
@@ -63,6 +64,10 @@ class FollowPath(State):
         # Get the global frame ID for the planner
         self.global_frame_id = rospy.get_param('/move_base/global_costmap/global_frame', 'map')
 
+        # Subscribe to the plan so we can see how close to complete we are (this is a big hack, but seems to work)
+        self._current_plan = None
+        self.plan_sub = rospy.Subscriber('/move_base/NavfnROS/plan', Path, self._handle_plan)
+
     def execute(self, userdata):
         global waypoints
         # Execute waypoints each in sequence
@@ -97,19 +102,17 @@ class FollowPath(State):
                     (waypoint.pose.pose.position.x, waypoint.pose.pose.position.y))
             rospy.loginfo("To cancel the goal: 'rostopic pub -1 /move_base/cancel actionlib_msgs/GoalID -- {}'")
             self.client.send_goal(goal)
-            if not self.distance_tolerance > 0.0:
-                self.client.wait_for_result()
-                rospy.loginfo("Waiting for %f sec..." % self.duration)
-                time.sleep(self.duration)
-            else:
-                #This is the loop which exist when the robot is near a certain GOAL point.
-                distance = 10
-                while(distance > self.distance_tolerance):
-                    now = rospy.Time.now()
-                    self.listener.waitForTransform(self.odom_frame_id, self.base_frame_id, now, rospy.Duration(4.0))
-                    trans,rot = self.listener.lookupTransform(self.odom_frame_id,self.base_frame_id, now)
-                    distance = math.sqrt(pow(waypoint.pose.pose.position.x-trans[0],2)+pow(waypoint.pose.pose.position.y-trans[1],2))
+
+            # Wait until we are close enough to the goal
+            while not self.client.wait_for_result(rospy.Duration(0, 1e+8)):
+                # If the current goal is short enough, we can move on
+                if len(self._current_plan.poses) < 15:
+                    break
+
         return 'success'
+
+    def _handle_plan(self, data):
+        self._current_plan = data
 
 def convert_PoseWithCovArray_to_PoseArray(waypoints):
     """Used to publish waypoints as pose array so that you can see them in rviz, etc."""

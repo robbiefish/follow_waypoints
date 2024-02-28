@@ -5,10 +5,11 @@ import rospy
 import actionlib
 from smach import State,StateMachine
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
-from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray ,PointStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray ,PointStamped, QuaternionStamped
 from std_msgs.msg import Empty
 from tf import TransformListener
 import tf
+import tf.transformations
 import math
 import rospkg
 import csv
@@ -59,6 +60,9 @@ class FollowPath(State):
         self.listener = tf.TransformListener()
         self.distance_tolerance = rospy.get_param('waypoint_distance_tolerance', 0.0)
 
+        # Get the global frame ID for the planner
+        self.global_frame_id = rospy.get_param('/move_base/global_costmap/global_frame', 'map')
+
     def execute(self, userdata):
         global waypoints
         # Execute waypoints each in sequence
@@ -67,6 +71,23 @@ class FollowPath(State):
             if waypoints == []:
                 rospy.loginfo('The waypoint queue has been reset.')
                 break
+
+            # Transform the goal into the planner global frame and then make sure we send a vertical orientation or else move_base gets grumpy
+            if self.tf.canTransform(self.frame_id, self.global_frame_id, rospy.get_rostime()):
+                q = QuaternionStamped()
+                q.header.frame_id = self.frame_id
+                q.quaternion = waypoint.pose.pose.orientation
+                q = self.tf.transformQuaternion(self.global_frame_id, q)
+                r, p, y = tf.transformations.euler_from_quaternion((q.quaternion.x, q.quaternion.y, q.quaternion.z, q.quaternion.w))
+                q_nums = tf.transformations.quaternion_from_euler(0, 0, y)
+                q.quaternion.x = q_nums[0]
+                q.quaternion.y = q_nums[1]
+                q.quaternion.z = q_nums[2]
+                q.quaternion.w = q_nums[3]
+                q = self.tf.transformQuaternion(self.frame_id, q)
+                r, p, y = tf.transformations.euler_from_quaternion((q.quaternion.x, q.quaternion.y, q.quaternion.z, q.quaternion.w))
+                waypoint.pose.pose.orientation = q.quaternion
+
             # Otherwise publish next waypoint as goal
             goal = MoveBaseGoal()
             goal.target_pose.header.frame_id = self.frame_id

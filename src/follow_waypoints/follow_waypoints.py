@@ -106,7 +106,7 @@ class FollowPath(State):
             # Wait until we are close enough to the goal
             while not self.client.wait_for_result(rospy.Duration(0, 1e+8)):
                 # If the current goal is short enough, we can move on
-                if len(self._current_plan.poses) < 15:
+                if len(self._current_plan.poses) < 18:
                     break
 
         return 'success'

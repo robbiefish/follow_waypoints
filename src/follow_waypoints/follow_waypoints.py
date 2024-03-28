@@ -15,7 +15,7 @@ import math
 import rospkg
 import csv
 import time
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, PolygonStamped, Point32
 
 # change Pose to the correct frame 
 def changePose(waypoint,target_frame):
@@ -68,17 +68,18 @@ class FollowPath(State):
         self._current_plan = None
         self.plan_sub = rospy.Subscriber('/move_base/NavfnROS/plan', Path, self._handle_plan)
 
+        # Publish a polygon containing the waypoints
+        self.waypoints_polygon_pub = rospy.Publisher('/waypoints_polygon', PolygonStamped)
+
     def execute(self, userdata):
         global waypoints
-        # Execute waypoints each in sequence
-        for waypoint in waypoints:
-            # Break if preempted
-            if waypoints == []:
-                rospy.loginfo('The waypoint queue has been reset.')
-                break
 
-            # Transform the goal into the planner global frame and then make sure we send a vertical orientation or else move_base gets grumpy
+        # Massage the data a little bit before processing it
+        polygon = PolygonStamped()
+        polygon.header.frame_id = self.frame_id
+        for waypoint in waypoints:
             if self.tf.canTransform(self.frame_id, self.global_frame_id, rospy.get_rostime()):
+                # Make sure we are only sending yaw to the planner
                 q = QuaternionStamped()
                 q.header.frame_id = self.frame_id
                 q.quaternion = waypoint.pose.pose.orientation
@@ -90,8 +91,30 @@ class FollowPath(State):
                 q.quaternion.z = q_nums[2]
                 q.quaternion.w = q_nums[3]
                 q = self.tf.transformQuaternion(self.frame_id, q)
-                r, p, y = tf.transformations.euler_from_quaternion((q.quaternion.x, q.quaternion.y, q.quaternion.z, q.quaternion.w))
                 waypoint.pose.pose.orientation = q.quaternion
+
+                # Make sure that z is zeroed at the global frame
+                p = PointStamped()
+                p.header.frame_id = self.frame_id
+                p.point = waypoint.pose.pose.position
+                p = self.tf.transformPoint(self.global_frame_id, p)
+                p.point.z = 0
+                p = self.tf.transformPoint(self.frame_id, p)
+                waypoint.pose.pose.position = p.point
+
+            # Accumulate the waypoints into a polygon
+            polygon.polygon.points.append(waypoint.pose.pose.position)
+
+        # Publish the polygon
+        polygon.header.stamp = rospy.get_rostime()
+        self.waypoints_polygon_pub.publish(polygon)
+
+        # Execute waypoints each in sequence
+        for waypoint in waypoints:
+            # Break if preempted
+            if waypoints == []:
+                rospy.loginfo('The waypoint queue has been reset.')
+                break
 
             # Otherwise publish next waypoint as goal
             goal = MoveBaseGoal()
